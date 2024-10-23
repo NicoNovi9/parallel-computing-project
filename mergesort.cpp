@@ -39,6 +39,7 @@
 #include <string.h>
 #include <fstream> 
 #include <iomanip>
+#include <vector>
 
 const int chunkSize = 256;
 
@@ -61,8 +62,6 @@ bool isSorted(int ref[], int data[], const size_t size){
 /**
   * sequential merge step (straight-forward implementation)
   */
-// TODO: cut-off could also apply here (extra parameter?)
-// TODO: optional: we can also break merge in two halves
 void MsMergeSequential(int *out, int *in, long begin1, long end1, long begin2, long end2, long outBegin) {
 	long left = begin1;
 	long right = begin2;
@@ -95,9 +94,6 @@ void MsMergeSequential(int *out, int *in, long begin1, long end1, long begin2, l
 /**
   * sequential MergeSort
   */
-// TODO: remember one additional parameter (depth)
-// TODO: recursive calls could be taskyfied
-// TODO: task synchronization also is required
 void MsSequential(int *array, int *tmp, bool inplace, long begin, long end) {
 	if (begin < (end - 1)) {
 		const long half = (begin + end) / 2;
@@ -113,10 +109,16 @@ void MsSequential(int *array, int *tmp, bool inplace, long begin, long end) {
 	}
 }
 
+/**
+ * MsParallel
+ * 
+ * Perform the merge phase of the MergeSort algorithm in parallel. 
+ * 
+ * @param depth Specifies the maximum number of recursion levels for parallel tasks.
+ *              - if 'depth' > 0: recursive division are processed in parallel using OpenMp tasks.
+ *              - if 'depth' == 0: the remaining recursive calls are executed sequentially.
+ */
 void MsParallel(int *array, int *tmp, bool inplace, long begin, long end, int depth) {
-
-    //printf("thread %d, begin %ld, end %ld, depth %d\n", omp_get_thread_num(), begin, end, depth);
-
     if (begin < (end - 1)) {
         const long half = (begin + end) / 2;
 
@@ -145,53 +147,83 @@ void MsParallel(int *array, int *tmp, bool inplace, long begin, long end, int de
 }
 
 
-/**
-  * Serial or Parallel MergeSort
+/** 
+  * MsMergeSort
+  * 
+  * MergeSort algorithm, executed in either sequential or parallel mode based on the 'parallel' parameter.
+  * 
+  * @param parallel Execution mode:
+  *                 - 0: Sequential sort
+  *                 - 1: Parallel sort with a fixed depth and a variable number of threads
+  *                 - 2: Parallel sort with fixed number of threads (8) and variable depth
+  * @param nthread Number of thread to be used to execute the parallel version (mode 1).
+  * @param depth Maximum recursion depth for parallel MergeSort (used in mode 2).
+  * 
+  * Function behavior: 
+  *         - if 'parallel' is 0, a sequential sort is performed
+  *         - if 'parallel' is 1, the number of thread used is equal to 'nthread' and the recursion depth is computed automatically
+  *         - if 'parallel' is 2, the recursion depth is equal to 'depth' and the number of threads used is 8 
   */
-// TODO: this function should create the parallel region
-// TODO: good point to compute a good depth level (cut-off)
-
 void MsMergeSort(int *array, int *tmp, const size_t size, int parallel, int depth, int nthread) {
 
-    if (parallel == 0) { //sequential
-        MsSequential(array, tmp, true, 0, size);
-    } 
-    else if(parallel == 1) { //fixed depth, variable number of threads
-        #pragma omp parallel num_threads(nthread)
-        {
-            #pragma omp single
+    switch (parallel) {
+        case 0: 
+            MsSequential(array, tmp, true, 0, size);
+            break;
+
+        case 1: 
+            #pragma omp parallel num_threads(nthread)
             {
-                depth = log(size / chunkSize + 1);
-                MsParallel(array, tmp, true, 0, size, depth);
+                #pragma omp single
+                {
+                    depth = log(size / chunkSize + 1);
+                    MsParallel(array, tmp, true, 0, size, depth);
+                }
             }
-        }
-    }
-    else if(parallel == 2) { //fixed number of threads, variable depth
-        #pragma omp parallel num_threads(8)
-        {
-            #pragma omp single
+            break;
+
+        case 2: 
+            #pragma omp parallel num_threads(8)
             {
-                MsParallel(array, tmp, true, 0, size, depth);
+                #pragma omp single
+                {
+                    MsParallel(array, tmp, true, 0, size, depth);
+                }
             }
-        }
+            break;
+
+        default:
+            printf("Invalid parallel flag\n");
+            break;
     }
-    else {
-        printf("Invalid parallel flag\n");
-    }
+
 }
 
 
 /** 
   * @brief program entry point
+  * 
+  * @param argv[]
+  *     - argv[0]: program name.
+  *     - argv[1]: size of the input array.
+  *     - argv[2]: parallel mode (0: sequential, 1: parallel with variable threads, 2: parallel with variable depth).
+  *     - argv[3]: nthread (mode 1) / depth (mode 2).
+  * @param argc :
+  *     - if argc is 1: it will be executed the runTests() function.
+  *     - if argc < 3 : wrong number of parameters.
+  *     - if argc is 3: sequential MergeSort is performed only if 'mode' == 0.
+  *     - if argc is 4: parallel MergeSort is performed
+  *                     - if 'parallel' is 1: variable number of threads, fixed depth.
+  *                     - if 'parallel' is 2: fixed number of threads (8), variable depth.   
   */
 int main(int argc, char* argv[]) {
     struct timeval t1, t2;
     double etime;
-    bool parallel = 0;
+    int parallel = 0; 
     int depth;
     int nthread;
 
-    if (argc > 1) { // with 0 arguments, run tests
+    if (argc > 1) { 
         if (argc < 3) {
             fprintf(stderr, "Usage: %s <size> <mode [0,1,2]> <depth|numthread>\n", argv[0]);
             fprintf(stderr, "Mode 0: sequential\nMode 1: specify nthread\nMode 2: specify cut-off\n");
